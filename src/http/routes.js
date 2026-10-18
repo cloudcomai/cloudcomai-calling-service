@@ -9,7 +9,7 @@ const transportSchema=z.object({direction:z.enum(['send','receive']).default('se
 const connectSchema=z.object({dtlsParameters:z.record(z.string(),z.unknown())}).strict();
 const produceSchema=z.object({transportId:z.string().min(1),kind:z.enum(['audio','video']),rtpParameters:z.record(z.string(),z.unknown()),appData:z.record(z.string(),z.unknown()).optional()}).strict();
 const consumeSchema=z.object({transportId:z.string().min(1),producerId:z.string().min(1),rtpCapabilities:z.record(z.string(),z.unknown())}).strict();
-const actionMap={accept:'accept',reject:'reject',cancel:'cancel',end:'end'};
+const actionMap={accept:'accept',reject:'reject',cancel:'cancel',end:'end',connected:'connected'};
 function parseBody(schema,body){const p=schema.safeParse(body);if(!p.success){const e=new Error('Invalid request body');e.status=400;e.details=p.error.issues;throw e;}return p.data;}
 function callId(raw){const p=idSchema.safeParse(raw);if(!p.success){const e=new Error('Call ID must be a UUID');e.status=400;e.code='invalid_call_id';throw e;}return p.data;}
 function fail(status,code,message){const e=new Error(message);e.status=status;e.code=code;return e;}
