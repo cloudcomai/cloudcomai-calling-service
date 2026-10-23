@@ -11,6 +11,10 @@ The initial proof of concept can place Node.js REST/WebSocket signaling, mediaso
 - MEDIASOUP_ANNOUNCED_IP, media port ranges, TURN host, and DB endpoint are environment configuration.
 - A later two-server design can place API/signaling and DB on Server A and mediasoup/coturn on Server B, but needs a media-node registry, authenticated internal control plane, shared call ownership, and client reconnect protocol.
 
+## Direct and group calls
+
+The API supports direct calls and group calls with up to 16 total participants. Group call invitees have independent ringing/accepted/rejected/left/missed states; the first acceptance starts media, the caller can end the entire group call, and individual participants can leave. Clients should call `GET /api/v1/calls/active` after reconnecting to restore active call UI state.
+
 ## Implemented foundation
 
 Authenticated APIs cover call lifecycle, router RTP capabilities, WebRTC transport creation/DTLS connection, producer publishing, remote producer discovery, consumer creation/resume, and short-lived HMAC TURN REST credentials. Call state changes remain REST-authoritative; WebSocket is authenticated and delivers server events.
