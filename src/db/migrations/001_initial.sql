@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS calls (
  caller_user_id VARCHAR(128) NOT NULL,
  callee_user_id VARCHAR(128) NOT NULL,
  call_type ENUM('audio','video') NOT NULL,
+ call_mode ENUM('direct','group') NOT NULL DEFAULT 'direct',
  state ENUM('ringing','connecting','connected','ended','rejected','cancelled','no_answer','failed') NOT NULL,
  end_reason VARCHAR(32) NULL,
  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -16,10 +17,14 @@ CREATE TABLE IF NOT EXISTS calls (
 CREATE TABLE IF NOT EXISTS call_participants (
  call_id CHAR(36) NOT NULL,
  user_id VARCHAR(128) NOT NULL,
- role ENUM('caller','callee') NOT NULL,
+ role ENUM('caller','member') NOT NULL,
+ participant_state ENUM('ringing','accepted','rejected','left','missed') NOT NULL DEFAULT 'ringing',
+ joined_at TIMESTAMP(3) NULL,
+ left_at TIMESTAMP(3) NULL,
  last_seen_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
  PRIMARY KEY(call_id,user_id),
  KEY idx_call_participants_user(user_id),
+ KEY idx_call_participants_state(call_id,participant_state),
  CONSTRAINT fk_call_participants_call FOREIGN KEY(call_id) REFERENCES calls(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 CREATE TABLE IF NOT EXISTS call_events (
