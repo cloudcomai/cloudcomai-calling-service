@@ -70,5 +70,6 @@ export class CallRepository {
    await conn.commit();return rows.map(r=>r.id);
   }catch(error){await conn.rollback();throw error;}finally{conn.release();}
  }
+ async expireStaleConnectingCalls(timeoutSeconds=20){const conn=await pool.getConnection();try{await conn.beginTransaction();const [rows]=await conn.execute("SELECT id FROM calls WHERE state='connecting' AND accepted_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? SECOND) ORDER BY accepted_at LIMIT 100 FOR UPDATE SKIP LOCKED",[timeoutSeconds]);for(const row of rows){await conn.execute("UPDATE calls SET state='failed',end_reason='connection_timeout',ended_at=UTC_TIMESTAMP(3) WHERE id=? AND state='connecting'",[row.id]);await conn.execute("UPDATE call_participants SET left_at=IF(participant_state IN ('ringing','accepted'),UTC_TIMESTAMP(3),left_at),participant_state=CASE WHEN participant_state='ringing' THEN 'missed' WHEN participant_state='accepted' THEN 'left' ELSE participant_state END WHERE call_id=? AND participant_state IN ('ringing','accepted')",[row.id]);await conn.execute('INSERT INTO call_events(event_id,call_id,event_type,payload) VALUES(?,?,?,?)',[randomUUID(),row.id,'call.failed',JSON.stringify({reason:'connection_timeout'})]);}await conn.commit();return rows.map(r=>r.id);}catch(error){await conn.rollback();throw error;}finally{conn.release();}}
  async ping(){await pool.query('SELECT 1');}
 }
