@@ -40,6 +40,7 @@ services:
   ports:
    - "3478:3478/udp"
    - "3478:3478/tcp"
+   - "5349:5349/tcp"
    - "50000-50100:50000-50100/udp"
   networks: [private]
 networks:
