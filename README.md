@@ -20,7 +20,7 @@ Development/POC foundation, **not production-ready**. It still needs integration
 1. Copy `.env.example` to `.env` and generate unique secrets. Never commit `.env`.
 2. Configure a least-privilege MySQL database/user.
 3. Run `npm install`, `npm test`, `npm run db:migrate`, and `npm start`.
-4. Configure coturn with the same secret as `TURN_SECRET`.
+4. Replace `REPLACE_WITH_TURN_SECRET` in `deploy/coturn/turnserver.conf` with the same value as `TURN_SECRET`; configure the real realm, public IP, and certificates before exposing TURN. Set `TURN_TLS_ENABLED=true` only after enabling the coturn TLS listener and mapping its certificate paths.
 5. Set `MEDIASOUP_ANNOUNCED_IP` to the reachable public IP and open the configured media/TURN ranges.
 
 The JWT middleware currently expects HS256, configured issuer/audience, and the configured user ID claim. Adapt it to CloudComAI's actual auth contract before integration.
