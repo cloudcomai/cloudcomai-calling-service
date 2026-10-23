@@ -11,6 +11,7 @@ Group: `POST /api/v1/calls` with `{"participantUserIds":["user-2","user-3"],"cal
 ## Lifecycle
 
 - `GET /api/v1/calls/:callId` participant-only call state and participant status.
+- `GET /api/v1/calls/active` returns current calls for the authenticated participant after reconnect; use this to resynchronize UI state after a WebSocket interruption.
 - `POST /api/v1/calls/:callId/accept`, `reject`, `cancel`, `end`, `connected`.
 - In group calls, accept/reject is per invitee, end by the caller ends the whole call, end by a joined invitee means leave; the call moves to connecting when the first invitee accepts.
 - `GET /api/v1/call-history?limit=20&before=<ISO timestamp>`.
