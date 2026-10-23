@@ -30,7 +30,7 @@ export class CallRepository {
    const [updated]=await conn.execute(`UPDATE calls SET ${assignments.join(',')} WHERE id=? AND state=?`,values);
    if(updated.affectedRows!==1){await conn.rollback();return{conflict:true,call:await this.getById(current.id)};}
    if(nextState==='no_answer'){
-    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state='ringing',UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state='ringing','missed',participant_state) WHERE call_id=?",[current.id]);
+    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state IN ('ringing','accepted'),UTC_TIMESTAMP(3),left_at),participant_state=CASE WHEN participant_state='ringing' THEN 'missed' WHEN participant_state='accepted' THEN 'left' ELSE participant_state END WHERE call_id=?",[current.id]);
    }else if(['ended','rejected','cancelled','failed'].includes(nextState)){
     await conn.execute("UPDATE call_participants SET left_at=IF(participant_state IN ('ringing','accepted'),UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state IN ('ringing','accepted'),'left',participant_state) WHERE call_id=?",[current.id]);
    }
