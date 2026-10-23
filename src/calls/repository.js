@@ -1,14 +1,74 @@
 import { randomUUID } from 'node:crypto';
 import { pool } from '../db/pool.js';
+
 export class CallRepository {
- async create({callerId,calleeId,participantIds=[calleeId],callType,callMode='direct'}){const id=randomUUID();const conn=await pool.getConnection();try{await conn.beginTransaction();await conn.execute('INSERT INTO calls (id, caller_user_id, callee_user_id, call_type, call_mode, state) VALUES (?, ?, ?, ?, ?, ?)',[id,callerId,participantIds[0],callType,callMode,'ringing']);for(const userId of [callerId,...participantIds])await conn.execute('INSERT INTO call_participants (call_id,user_id,role,participant_state,last_seen_at) VALUES (?,?,?,?,UTC_TIMESTAMP(3))',[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing']);await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),id,callerId,'call.created',JSON.stringify({callType,callMode,participantIds})]);await conn.commit();return this.getById(id);}catch(error){await conn.rollback();throw error;}finally{conn.release();}}
- async getById(id){const [rows]=await pool.execute('SELECT * FROM calls WHERE id = ?',[id]);if(!rows[0])return null;const [participants]=await pool.execute('SELECT user_id,role,participant_state,joined_at,left_at,last_seen_at FROM call_participants WHERE call_id = ? ORDER BY role DESC,user_id',[id]);return{...rows[0],participants,participant_user_ids:participants.map(p=>p.user_id)};}
- async transition({call,nextState,actorId,action}){const conn=await pool.getConnection();try{await conn.beginTransaction();const [rows]=await conn.execute('SELECT * FROM calls WHERE id = ? FOR UPDATE',[call.id]);const current=rows[0];if(!current){await conn.rollback();return null;}if(current.state!==call.state){await conn.rollback();return{conflict:true,call:await this.getById(current.id)};}const timeFields={connecting:'accepted_at',connected:'connected_at',ended:'ended_at',rejected:'ended_at',cancelled:'ended_at',no_answer:'ended_at',failed:'ended_at'};const field=timeFields[nextState];const assignments=['state = ?','end_reason = ?'];const values=[nextState,['ended','rejected','cancelled','no_answer','failed'].includes(nextState)?action:null];if(field)assignments.push(`${field} = UTC_TIMESTAMP(3)`);values.push(current.id,current.state);const [update]=await conn.execute(`UPDATE calls SET ${assignments.join(', ')} WHERE id = ? AND state = ?`,values);if(update.affectedRows!==1){await conn.rollback();return{conflict:true,call:await this.getById(current.id)};}if(nextState==='no_answer')await conn.execute('UPDATE call_participants SET participant_state=IF(participant_state=\'ringing\',\'missed\',participant_state),left_at=IF(participant_state=\'ringing\',UTC_TIMESTAMP(3),left_at) WHERE call_id=?',[current.id]);else if(['ended','rejected','cancelled','failed'].includes(nextState))await conn.execute('UPDATE call_participants SET participant_state=IF(participant_state IN (\'ringing\',\'accepted\'),\'left\',participant_state),left_at=IF(participant_state IN (\'ringing\',\'accepted\'),UTC_TIMESTAMP(3),left_at) WHERE call_id=?',[current.id]);await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),current.id,actorId??null,`call.${action}`,JSON.stringify({previousState:current.state,state:nextState})]);await conn.commit();return{call:await this.getById(current.id)};}catch(error){await conn.rollback();throw error;}finally{conn.release();}}
- async setParticipantState({callId,userId,state,actorId}){const conn=await pool.getConnection();try{await conn.beginTransaction();const [rows]=await conn.execute('SELECT participant_state FROM call_participants WHERE call_id=? AND user_id=? FOR UPDATE',[callId,userId]);if(!rows[0]){await conn.rollback();return false;}await conn.execute('UPDATE call_participants SET participant_state=?,joined_at=IF(?="accepted",COALESCE(joined_at,UTC_TIMESTAMP(3)),joined_at),left_at=IF(? IN ("left","rejected","missed"),UTC_TIMESTAMP(3),left_at),last_seen_at=UTC_TIMESTAMP(3) WHERE call_id=? AND user_id=?',[state,state,state,callId,userId]);await conn.execute('INSERT INTO call_events(event_id,call_id,actor_user_id,event_type,payload) VALUES(?,?,?,?,?)',[randomUUID(),callId,actorId??null,'participant.'+state,JSON.stringify({userId,previousState:rows[0].participant_state,state})]);await conn.commit();return true;}catch(error){await conn.rollback();throw error;}finally{conn.release();}}
+ async create({callerId,calleeId,participantIds=[calleeId],callType,callMode='direct'}){
+  const id=randomUUID();const conn=await pool.getConnection();
+  try{
+   await conn.beginTransaction();
+   await conn.execute('INSERT INTO calls (id,caller_user_id,callee_user_id,call_type,call_mode,state) VALUES (?,?,?,?,?,?)',[id,callerId,participantIds[0],callType,callMode,'ringing']);
+   for(const userId of [callerId,...participantIds])await conn.execute('INSERT INTO call_participants (call_id,user_id,role,participant_state,last_seen_at) VALUES (?,?,?,?,UTC_TIMESTAMP(3))',[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing']);
+   await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),id,callerId,'call.created',JSON.stringify({callType,callMode,participantIds})]);
+   await conn.commit();return await this.getById(id);
+  }catch(error){await conn.rollback();throw error;}finally{conn.release();}
+ }
+ async getById(id){
+  const [rows]=await pool.execute('SELECT * FROM calls WHERE id=?',[id]);if(!rows[0])return null;
+  const [participants]=await pool.execute('SELECT user_id,role,participant_state,joined_at,left_at,last_seen_at FROM call_participants WHERE call_id=? ORDER BY role DESC,user_id',[id]);
+  return{...rows[0],participants,participant_user_ids:participants.map(p=>p.user_id)};
+ }
+ async transition({call,nextState,actorId,action}){
+  const conn=await pool.getConnection();
+  try{
+   await conn.beginTransaction();const [rows]=await conn.execute('SELECT * FROM calls WHERE id=? FOR UPDATE',[call.id]);const current=rows[0];
+   if(!current){await conn.rollback();return null;}
+   if(current.state!==call.state){await conn.rollback();return{conflict:true,call:await this.getById(current.id)};}
+   const timeFields={connecting:'accepted_at',connected:'connected_at',ended:'ended_at',rejected:'ended_at',cancelled:'ended_at',no_answer:'ended_at',failed:'ended_at'};
+   const assignments=['state=?','end_reason=?'];const values=[nextState,['ended','rejected','cancelled','no_answer','failed'].includes(nextState)?action:null];
+   if(timeFields[nextState])assignments.push(`${timeFields[nextState]}=UTC_TIMESTAMP(3)`);
+   values.push(current.id,current.state);
+   const [updated]=await conn.execute(`UPDATE calls SET ${assignments.join(',')} WHERE id=? AND state=?`,values);
+   if(updated.affectedRows!==1){await conn.rollback();return{conflict:true,call:await this.getById(current.id)};}
+   if(nextState==='no_answer'){
+    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state='ringing',UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state='ringing','missed',participant_state) WHERE call_id=?",[current.id]);
+   }else if(['ended','rejected','cancelled','failed'].includes(nextState)){
+    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state IN ('ringing','accepted'),UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state IN ('ringing','accepted'),'left',participant_state) WHERE call_id=?",[current.id]);
+   }
+   await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),current.id,actorId??null,`call.${action}`,JSON.stringify({previousState:current.state,state:nextState})]);
+   await conn.commit();return{call:await this.getById(current.id)};
+  }catch(error){await conn.rollback();throw error;}finally{conn.release();}
+ }
+ async setParticipantState({callId,userId,state,actorId}){
+  const conn=await pool.getConnection();
+  try{
+   await conn.beginTransaction();const [rows]=await conn.execute('SELECT participant_state FROM call_participants WHERE call_id=? AND user_id=? FOR UPDATE',[callId,userId]);
+   if(!rows[0]){await conn.rollback();return false;}
+   await conn.execute("UPDATE call_participants SET participant_state=?,joined_at=IF(?='accepted',COALESCE(joined_at,UTC_TIMESTAMP(3)),joined_at),left_at=IF(? IN ('left','rejected','missed'),UTC_TIMESTAMP(3),left_at),last_seen_at=UTC_TIMESTAMP(3) WHERE call_id=? AND user_id=?",[state,state,state,callId,userId]);
+   await conn.execute('INSERT INTO call_events(event_id,call_id,actor_user_id,event_type,payload) VALUES(?,?,?,?,?)',[randomUUID(),callId,actorId??null,'participant.'+state,JSON.stringify({userId,previousState:rows[0].participant_state,state})]);
+   await conn.commit();return true;
+  }catch(error){await conn.rollback();throw error;}finally{conn.release();}
+ }
  async getParticipantState(callId,userId){const [rows]=await pool.execute('SELECT participant_state FROM call_participants WHERE call_id=? AND user_id=?',[callId,userId]);return rows[0]?.participant_state??null;}
  async listParticipants(callId){const [rows]=await pool.execute('SELECT user_id,role,participant_state FROM call_participants WHERE call_id=?',[callId]);return rows;}
- async history(userId,{limit=20,before}={}){const params=[userId];let cursor='';if(before){cursor=' AND c.created_at < ?';params.push(new Date(before));}params.push(limit);const [rows]=await pool.execute(`SELECT DISTINCT c.id,c.caller_user_id,c.callee_user_id,c.call_type,c.call_mode,c.state,c.created_at,c.accepted_at,c.connected_at,c.ended_at,c.end_reason FROM calls c JOIN call_participants p ON p.call_id=c.id WHERE p.user_id=? ${cursor} ORDER BY c.created_at DESC LIMIT ?`,params);return rows;}
- async listActiveForUser(userId){const [rows]=await pool.execute('SELECT id FROM calls WHERE state IN (\'ringing\',\'connecting\',\'connected\') AND id IN (SELECT call_id FROM call_participants WHERE user_id=?) ORDER BY created_at DESC LIMIT 100',[userId]);const calls=[];for(const row of rows){const call=await this.getById(row.id);if(call)calls.push(call);}return calls;}
- async expireRingingCalls(timeoutSeconds=45){const conn=await pool.getConnection();try{await conn.beginTransaction();const [rows]=await conn.execute('SELECT id FROM calls WHERE state="ringing" AND created_at < UTC_TIMESTAMP(3) - INTERVAL ? SECOND ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED',[timeoutSeconds]);for(const row of rows){await conn.execute('UPDATE calls SET state="no_answer",end_reason="no_answer",ended_at=UTC_TIMESTAMP(3) WHERE id=? AND state="ringing"',[row.id]);await conn.execute('UPDATE call_participants SET participant_state="missed",left_at=UTC_TIMESTAMP(3) WHERE call_id=? AND participant_state="ringing"',[row.id]);await conn.execute('INSERT INTO call_events(event_id,call_id,event_type,payload) VALUES(?,?,?,?)',[randomUUID(),row.id,'call.no_answer',JSON.stringify({source:'expiry_sweeper'})]);}await conn.commit();return rows.map(r=>r.id);}catch(error){await conn.rollback();throw error;}finally{conn.release();}}
+ async history(userId,{limit=20,before}={}){
+  const params=[userId];let cursor='';if(before){cursor=' AND c.created_at < ?';params.push(new Date(before));}params.push(limit);
+  const [rows]=await pool.execute(`SELECT DISTINCT c.id,c.caller_user_id,c.callee_user_id,c.call_type,c.call_mode,c.state,c.created_at,c.accepted_at,c.connected_at,c.ended_at,c.end_reason FROM calls c JOIN call_participants p ON p.call_id=c.id WHERE p.user_id=? ${cursor} ORDER BY c.created_at DESC LIMIT ?`,params);return rows;
+ }
+ async listActiveForUser(userId){
+  const [rows]=await pool.execute("SELECT id FROM calls WHERE state IN ('ringing','connecting','connected') AND id IN (SELECT call_id FROM call_participants WHERE user_id=?) ORDER BY created_at DESC LIMIT 100",[userId]);
+  const calls=[];for(const row of rows){const call=await this.getById(row.id);if(call)calls.push(call);}return calls;
+ }
+ async expireRingingCalls(timeoutSeconds=45){
+  const conn=await pool.getConnection();
+  try{
+   await conn.beginTransaction();const [rows]=await conn.execute("SELECT id FROM calls WHERE state='ringing' AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? SECOND) ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED",[timeoutSeconds]);
+   for(const row of rows){
+    await conn.execute("UPDATE calls SET state='no_answer',end_reason='no_answer',ended_at=UTC_TIMESTAMP(3) WHERE id=? AND state='ringing'",[row.id]);
+    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state='ringing',UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state='ringing','missed',participant_state) WHERE call_id=?",[row.id]);
+    await conn.execute('INSERT INTO call_events(event_id,call_id,event_type,payload) VALUES(?,?,?,?)',[randomUUID(),row.id,'call.no_answer',JSON.stringify({source:'expiry_sweeper'})]);
+   }
+   await conn.commit();return rows.map(r=>r.id);
+  }catch(error){await conn.rollback();throw error;}finally{conn.release();}
+ }
  async ping(){await pool.query('SELECT 1');}
 }
