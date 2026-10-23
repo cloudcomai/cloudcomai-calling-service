@@ -55,7 +55,7 @@ export class CallRepository {
   const [rows]=await pool.execute(`SELECT DISTINCT c.id,c.caller_user_id,c.callee_user_id,c.call_type,c.call_mode,c.state,c.created_at,c.accepted_at,c.connected_at,c.ended_at,c.end_reason FROM calls c JOIN call_participants p ON p.call_id=c.id WHERE p.user_id=? ${cursor} ORDER BY c.created_at DESC LIMIT ?`,params);return rows;
  }
  async listActiveForUser(userId){
-  const [rows]=await pool.execute("SELECT id FROM calls WHERE state IN ('ringing','connecting','connected') AND id IN (SELECT call_id FROM call_participants WHERE user_id=?) ORDER BY created_at DESC LIMIT 100",[userId]);
+  const [rows]=await pool.execute("SELECT c.id FROM calls c WHERE c.state IN ('ringing','connecting','connected') AND EXISTS (SELECT 1 FROM call_participants p WHERE p.call_id=c.id AND p.user_id=? AND p.participant_state IN ('ringing','accepted')) ORDER BY c.created_at DESC LIMIT 100",[userId]);
   const calls=[];for(const row of rows){const call=await this.getById(row.id);if(call)calls.push(call);}return calls;
  }
  async expireRingingCalls(timeoutSeconds=45){
