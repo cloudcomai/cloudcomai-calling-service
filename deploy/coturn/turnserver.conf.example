@@ -1,0 +1,22 @@
+# Copy to /etc/turnserver.conf and substitute the same secret configured as TURN_SECRET.
+listening-port=3478
+# tls-listening-port=5349
+fingerprint
+lt-cred-mech
+use-auth-secret
+static-auth-secret=REPLACE_WITH_TURN_SECRET
+realm=calls.example.com
+server-name=calls.example.com
+listening-ip=0.0.0.0
+# Set external-ip to the VM public IP when behind NAT.
+# external-ip=PUBLIC_IP/PRIVATE_IP
+min-port=50000
+max-port=50100
+no-multicast-peers
+no-cli
+no-loopback-peers
+# Add a certificate and uncomment these for TURN over TLS:
+# cert=/etc/letsencrypt/live/calls.example.com/fullchain.pem
+# pkey=/etc/letsencrypt/live/calls.example.com/privkey.pem
+# no-tlsv1
+# no-tlsv1_1

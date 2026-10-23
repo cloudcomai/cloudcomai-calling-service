@@ -1,0 +1,10 @@
+import { readFile } from 'node:fs/promises';
+import { pool } from './pool.js';
+async function columnExists(table,column){const [rows]=await pool.execute('SELECT COUNT(*) AS total FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?',[table,column]);return Number(rows[0]?.total)>0;}
+async function migrate(){const sql=await readFile(new URL('./migrations/001_initial.sql',import.meta.url),'utf8');for(const statement of sql.split(';').map(s=>s.trim()).filter(Boolean))await pool.query(statement);
+ if(!await columnExists('calls','call_mode'))await pool.query("ALTER TABLE calls ADD COLUMN call_mode ENUM('direct','group') NOT NULL DEFAULT 'direct' AFTER call_type");
+ for(const [column,definition] of [['participant_state',"ENUM('ringing','accepted','rejected','left','missed') NOT NULL DEFAULT 'ringing'"],['joined_at','TIMESTAMP(3) NULL'],['left_at','TIMESTAMP(3) NULL']])if(!await columnExists('call_participants',column))await pool.query(`ALTER TABLE call_participants ADD COLUMN ${column} ${definition}`);
+ const [roleRows]=await pool.execute("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='call_participants' AND COLUMN_NAME='role'");if(roleRows[0]?.COLUMN_TYPE?.includes("'callee'")){await pool.query("ALTER TABLE call_participants MODIFY role ENUM('caller','callee','member') NOT NULL");await pool.query("UPDATE call_participants SET role='member' WHERE role='callee'");await pool.query("ALTER TABLE call_participants MODIFY role ENUM('caller','member') NOT NULL");}
+ const [rows]=await pool.execute("SELECT COUNT(*) AS total FROM call_participants WHERE participant_state='ringing'");if(Number(rows[0]?.total)>0){await pool.query("UPDATE call_participants SET participant_state=IF(role='caller','accepted','ringing') WHERE participant_state='ringing'");}
+ console.log('Calling service database schema is up to date.');}
+try{await migrate();}catch(error){console.error('Database migration failed:',error.message);process.exitCode=1;}finally{await pool.end();}
