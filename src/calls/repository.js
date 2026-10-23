@@ -7,7 +7,7 @@ export class CallRepository {
   try{
    await conn.beginTransaction();
    await conn.execute('INSERT INTO calls (id,caller_user_id,callee_user_id,call_type,call_mode,state) VALUES (?,?,?,?,?,?)',[id,callerId,participantIds[0],callType,callMode,'ringing']);
-   for(const userId of [callerId,...participantIds])await conn.execute('INSERT INTO call_participants (call_id,user_id,role,participant_state,last_seen_at) VALUES (?,?,?,?,UTC_TIMESTAMP(3))',[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing']);
+   for(const userId of [callerId,...participantIds])await conn.execute('INSERT INTO call_participants (call_id,user_id,role,participant_state,joined_at,last_seen_at) VALUES (?,?,?,?,IF(?='accepted',UTC_TIMESTAMP(3),NULL),UTC_TIMESTAMP(3))',[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing',userId===callerId?'accepted':'ringing']);
    await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),id,callerId,'call.created',JSON.stringify({callType,callMode,participantIds})]);
    await conn.commit();return await this.getById(id);
   }catch(error){await conn.rollback();throw error;}finally{conn.release();}
@@ -64,7 +64,7 @@ export class CallRepository {
    await conn.beginTransaction();const [rows]=await conn.execute("SELECT id FROM calls WHERE state='ringing' AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? SECOND) ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED",[timeoutSeconds]);
    for(const row of rows){
     await conn.execute("UPDATE calls SET state='no_answer',end_reason='no_answer',ended_at=UTC_TIMESTAMP(3) WHERE id=? AND state='ringing'",[row.id]);
-    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state='ringing',UTC_TIMESTAMP(3),left_at),participant_state=IF(participant_state='ringing','missed',participant_state) WHERE call_id=?",[row.id]);
+    await conn.execute("UPDATE call_participants SET left_at=IF(participant_state IN ('ringing','accepted'),UTC_TIMESTAMP(3),left_at),participant_state=CASE WHEN participant_state='ringing' THEN 'missed' WHEN participant_state='accepted' THEN 'left' ELSE participant_state END WHERE call_id=? AND participant_state IN ('ringing','accepted')",[row.id]);
     await conn.execute('INSERT INTO call_events(event_id,call_id,event_type,payload) VALUES(?,?,?,?)',[randomUUID(),row.id,'call.no_answer',JSON.stringify({source:'expiry_sweeper'})]);
    }
    await conn.commit();return rows.map(r=>r.id);
