@@ -7,7 +7,7 @@ export class CallRepository {
   try{
    await conn.beginTransaction();
    await conn.execute('INSERT INTO calls (id,caller_user_id,callee_user_id,call_type,call_mode,state) VALUES (?,?,?,?,?,?)',[id,callerId,participantIds[0],callType,callMode,'ringing']);
-   for(const userId of [callerId,...participantIds])await conn.execute('INSERT INTO call_participants (call_id,user_id,role,participant_state,joined_at,last_seen_at) VALUES (?,?,?,?,IF(?='accepted',UTC_TIMESTAMP(3),NULL),UTC_TIMESTAMP(3))',[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing',userId===callerId?'accepted':'ringing']);
+   for(const userId of [callerId,...participantIds])await conn.execute("INSERT INTO call_participants (call_id,user_id,role,participant_state,joined_at,last_seen_at) VALUES (?,?,?,?,IF(?='accepted',UTC_TIMESTAMP(3),NULL),UTC_TIMESTAMP(3))",[id,userId,userId===callerId?'caller':'member',userId===callerId?'accepted':'ringing',userId===callerId?'accepted':'ringing']);
    await conn.execute('INSERT INTO call_events (event_id,call_id,actor_user_id,event_type,payload) VALUES (?,?,?,?,?)',[randomUUID(),id,callerId,'call.created',JSON.stringify({callType,callMode,participantIds})]);
    await conn.commit();return await this.getById(id);
   }catch(error){await conn.rollback();throw error;}finally{conn.release();}
