@@ -4,7 +4,7 @@ import { requireAuth } from '../auth/jwt.js';
 import { createTurnCredentials } from '../media/turn-credentials.js';
 import { env } from '../config/env.js';
 const idSchema=z.string().uuid();
-const createSchema=z.object({calleeUserId:z.string().min(1).max(128),callType:z.enum(['audio','video'])}).strict();
+const createSchema=z.object({calleeUserId:z.string().min(1).max(128).optional(),participantUserIds:z.array(z.string().min(1).max(128)).min(1).max(15).optional(),callType:z.enum(['audio','video'])}).strict().superRefine((v,ctx)=>{if(Boolean(v.calleeUserId)===Boolean(v.participantUserIds))ctx.addIssue({code:'custom',message:'Provide either calleeUserId for a direct call or participantUserIds for a group call'});if(v.participantUserIds&&new Set(v.participantUserIds).size!==v.participantUserIds.length)ctx.addIssue({code:'custom',message:'Group participant IDs must be unique'});});
 const transportSchema=z.object({direction:z.enum(['send','receive']).default('send')}).strict();
 const connectSchema=z.object({dtlsParameters:z.record(z.string(),z.unknown())}).strict();
 const produceSchema=z.object({transportId:z.string().min(1),kind:z.enum(['audio','video']),rtpParameters:z.record(z.string(),z.unknown()),appData:z.record(z.string(),z.unknown()).optional()}).strict();
@@ -14,7 +14,7 @@ function parseBody(schema,body){const p=schema.safeParse(body);if(!p.success){co
 function callId(raw){const p=idSchema.safeParse(raw);if(!p.success){const e=new Error('Call ID must be a UUID');e.status=400;e.code='invalid_call_id';throw e;}return p.data;}
 function fail(status,code,message){const e=new Error(message);e.status=status;e.code=code;return e;}
 export function createRouter({callService,repository,mediaManager}){const router=Router();router.use(requireAuth);
- router.post('/calls',async(req,res,next)=>{try{const input=parseBody(createSchema,req.body);res.status(201).json({call:await callService.create({callerId:req.auth.userId,calleeId:input.calleeUserId,callType:input.callType})});}catch(e){next(e);}});
+ router.post('/calls',async(req,res,next)=>{try{const input=parseBody(createSchema,req.body);const participantIds=input.participantUserIds??[input.calleeUserId];res.status(201).json({call:await callService.create({callerId:req.auth.userId,calleeId:participantIds[0],participantIds,callMode:participantIds.length>1?'group':'direct',callType:input.callType})});}catch(e){next(e);}});
  router.get('/calls/:callId',async(req,res,next)=>{try{const call=await callService.getForParticipant(callId(req.params.callId),req.auth.userId);if(!call)return res.status(404).json({error:{code:'not_found',message:'Call not found'}});res.json({call});}catch(e){next(e);}});
  for(const[path,action]of Object.entries(actionMap))router.post(`/calls/:callId/${path}`,async(req,res,next)=>{try{res.json({call:await callService.act({callId:callId(req.params.callId),actorId:req.auth.userId,action})});}catch(e){next(e);}});
  router.get('/calls/:callId/ice-servers',async(req,res,next)=>{try{const call=await callService.getForParticipant(callId(req.params.callId),req.auth.userId);if(!call)throw fail(404,'not_found','Call not found');if(['ended','rejected','cancelled','no_answer','failed'].includes(call.state))throw fail(409,'call_not_active','Call is no longer active');const c=createTurnCredentials(req.auth.userId,{secret:env.TURN_SECRET,host:env.TURN_HOST,port:env.TURN_UDP_PORT});res.set('Cache-Control','no-store');res.json({iceServers:c.iceServers,username:c.username,credential:c.credential,ttlSeconds:c.ttlSeconds});}catch(e){next(e);}});
